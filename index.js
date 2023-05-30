@@ -1,7 +1,8 @@
 const express = require('express')
 const app = express();
 const cors = require('cors')
-require('dotenv').config()
+require('dotenv').config();
+const jwt = require('jsonwebtoken');
 const port = process.env.PORT || 3000
 // const port = express
 
@@ -31,10 +32,44 @@ async function run() {
     const bistroMenuDatabase = client.db("BistroDB").collection("menu")
     const bistroReviewsDatabase = client.db("BistroDB").collection("reviews")
     const bistroCartsDatabase = client.db("BistroDB").collection("carts")
+    const bistroUsersDatabase = client.db("BistroDB").collection("users")
+
+
+    // users
+    app.post('/users',async(req, res)=>{
+      const user = req.body;
+      console.log(user);
+      const query = {email: user.email}
+      const existingUser = await bistroUsersDatabase.findOne(query);
+      console.log("existingUser", existingUser);
+
+      if (existingUser) {
+        return res.send({message: ' user alrady exist'})
+      }
+      const result = await bistroUsersDatabase.insertOne(user)
+      res.send(result)
+    })
+
+    app.get('/users', async (req, res) => {
+      const result = await bistroUsersDatabase.find().toArray()
+      res.send(result)
+    })
 
     app.post('/cart', async (req, res) => {
       const items = req.body
       const result = await bistroCartsDatabase.insertOne(items);
+      res.send(result)
+    })
+    //users patch admin
+    app.patch('/users/admin/:id', async (req, res) => {
+      const id = req.params.id;
+      const filter = {_id: new ObjectId(id)};
+      const updateDoc = {
+        $set:{
+          roll: 'admin'
+        },
+      };
+      const result = await bistroUsersDatabase.updateOne(filter, updateDoc);
       res.send(result)
     })
     // cart delete
