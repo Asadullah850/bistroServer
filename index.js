@@ -10,6 +10,23 @@ const port = process.env.PORT || 3000
 app.use(cors())
 app.use(express.json())
 
+const verifyJWT = (req, res, next) => {
+  const authorization = req.headers.authorization;
+  if (!authorization) {
+    return res.status(401).send({ error: true, message: "unauthorized access" })
+  }
+  // bearer token
+  const token = authorization.split(' ')[1];
+
+  jwt.verify(token, process.env.ACCES_TOKEN, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ error: true, message: "unauthorized access" })
+    }
+    req.decoded = decoded;
+    next();
+  })
+}
+
 // database
 
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
@@ -35,37 +52,63 @@ async function run() {
     const bistroUsersDatabase = client.db("BistroDB").collection("users")
 
 
-    // users
-    app.post('/users',async(req, res)=>{
+    app.post('/jwt', (req, res) => {
       const user = req.body;
-      console.log(user);
-      const query = {email: user.email}
-      const existingUser = await bistroUsersDatabase.findOne(query);
-      console.log("existingUser", existingUser);
-
-      if (existingUser) {
-        return res.send({message: ' user alrady exist'})
-      }
-      const result = await bistroUsersDatabase.insertOne(user)
-      res.send(result)
+      const token = jwt.sign(user, process.env.ACCES_TOKEN, { expiresIn: '1h' });
+      res.send({ token })
     })
 
-    app.get('/users', async (req, res) => {
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email;
+      const query = { email: email };
+      const user = await bistroUsersDatabase.findOne(query)
+      if (user?.roll !== 'admin') {
+        return res.status(403).send({ error: true, message: 'forbidden message' });
+      }
+      next();
+    }
+
+    app.get('/users', verifyJWT, verifyAdmin, async (req, res) => {
       const result = await bistroUsersDatabase.find().toArray()
       res.send(result)
     })
 
-    app.post('/cart', async (req, res) => {
-      const items = req.body
-      const result = await bistroCartsDatabase.insertOne(items);
+    // users
+    app.post('/users', async (req, res) => {
+      const user = req.body;
+      console.log(user);
+      const query = { email: user.email }
+      const existingUser = await bistroUsersDatabase.findOne(query);
+      console.log("existingUser", existingUser);
+
+      if (existingUser) {
+        return res.send({ message: ' user already exist' })
+      }
+
+      const result = await bistroUsersDatabase.insertOne(user)
       res.send(result)
     })
+
+    app.get('/users/admin/:email', verifyJWT, async (req, res) => {
+      const email = req.params.email;
+
+      if (req.decoded.email !== email) {
+        res.send({ admin: false })
+      }
+
+      const query = { email: email }
+      const user = await bistroUsersDatabase.findOne(query)
+      const result = { admin: user?.roll === 'admin' }
+      res.send(result);
+    })
+
+
     //users patch admin
     app.patch('/users/admin/:id', async (req, res) => {
       const id = req.params.id;
-      const filter = {_id: new ObjectId(id)};
+      const filter = { _id: new ObjectId(id) };
       const updateDoc = {
-        $set:{
+        $set: {
           roll: 'admin'
         },
       };
@@ -75,21 +118,36 @@ async function run() {
     // cart delete
     app.delete('/cart/:id', async (req, res) => {
       const id = req.params.id
-      const query = {_id: new ObjectId(id)}
+      const query = { _id: new ObjectId(id) }
       const result = await bistroCartsDatabase.deleteOne(query);
       res.send(result)
     })
 
-    // cart api
-    app.get('/carts', async (req, res) => {
+    // cart collection api
+    app.get('/carts', verifyJWT, async (req, res) => {
       const email = req.query.email
+
       if (!email) {
         res.send([])
       }
-      const query = {email: email}
+
+      // decoded email checked
+      const decodedEmail = req.decoded.email;
+      if (email !== decodedEmail) {
+        return res.status(403).send({ error: true, message: "forvedden access" })
+      }
+
+      const query = { email: email }
       const result = await bistroCartsDatabase.find(query).toArray()
       res.send(result)
     })
+
+    app.post('/cart', async (req, res) => {
+      const items = req.body
+      const result = await bistroCartsDatabase.insertOne(items);
+      res.send(result)
+    })
+
 
     app.get('/reviews', async (req, res) => {
       const result = await bistroReviewsDatabase.find().toArray()
