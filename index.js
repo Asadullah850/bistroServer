@@ -2,6 +2,7 @@ const express = require('express')
 const app = express();
 const cors = require('cors')
 require('dotenv').config();
+const stripe = require('stripe')(process.env.PAYMENT_KEY)
 const jwt = require('jsonwebtoken');
 const port = process.env.PORT || 3000
 // const port = express
@@ -50,7 +51,33 @@ async function run() {
     const bistroReviewsDatabase = client.db("BistroDB").collection("reviews")
     const bistroCartsDatabase = client.db("BistroDB").collection("carts")
     const bistroUsersDatabase = client.db("BistroDB").collection("users")
+    const paymentInfoBistroDatabase = client.db("BistroDB").collection("payments")
+    // app.post("/create-payment-intent", async (req, res) => {
+    //   const { items } = req.body;
+    // )
 
+    app.post('/create-payment-intent', verifyJWT, async(req, res)=>{
+      const {price} = req.body;
+      const amount = price * 100;
+      console.log(price, amount);
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount, 
+        currency: 'usd',
+        payment_method_types: ['card']
+      });
+      res.send( {
+        clientSecret: paymentIntent.client_secret
+      })
+    })
+
+    // payment api
+    app.post('/payments', verifyJWT, async(req, res)=>{
+      const payment = req.body
+      const insertResult = await paymentInfoBistroDatabase.insertOne(payment)
+      const query = {_id: {$in: payment.cartItemId.map(id => new ObjectId(id))}}
+      const deleteResult = await bistroCartsDatabase.deleteMany(query)
+      res.send(insertResult, deleteResult)
+    })
 
     app.post('/jwt', (req, res) => {
       const user = req.body;
@@ -76,10 +103,10 @@ async function run() {
     // users
     app.post('/users', async (req, res) => {
       const user = req.body;
-      console.log(user);
+      // console.log(user);
       const query = { email: user.email }
       const existingUser = await bistroUsersDatabase.findOne(query);
-      console.log("existingUser", existingUser);
+      // console.log("existingUser", existingUser);
 
       if (existingUser) {
         return res.send({ message: ' user already exist' })
@@ -130,7 +157,6 @@ async function run() {
       if (!email) {
         res.send([])
       }
-
       // decoded email checked
       const decodedEmail = req.decoded.email;
       if (email !== decodedEmail) {
@@ -153,6 +179,22 @@ async function run() {
       const result = await bistroReviewsDatabase.find().toArray()
       res.send(result)
     })
+
+    app.post('/menu', verifyJWT, verifyAdmin, async (req, res)=>{
+      const newItem = req.body;
+      const result = await bistroMenuDatabase.insertOne(newItem)
+      res.send(result)
+
+    })
+
+    app.delete('/menu/:id', verifyJWT, verifyAdmin, async (req, res)=>{
+      const id = req.params.id;
+      const query = {_id: new ObjectId(id)}
+      console.log(query, id);
+      const result = await bistroMenuDatabase.deleteOne(query)
+      res.send(result)
+    })
+
     app.get('/menu', async (req, res) => {
       const result = await bistroMenuDatabase.find().toArray()
       res.send(result)
