@@ -55,10 +55,26 @@ async function run() {
     // app.post("/create-payment-intent", async (req, res) => {
     //   const { items } = req.body;
     // )
+    app.post('/jwt', (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.ACCES_TOKEN, { expiresIn: '1h' });
+      res.send({ token })
+    })
+
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email;
+      console.log(email);
+      const query = { email: email };
+      const user = await bistroUsersDatabase.findOne(query)
+      if (user?.roll !== 'admin') {
+        return res.status(403).send({ error: true, message: 'forbidden message' });
+      }
+      next();
+    }
 
     app.post('/create-payment-intent', verifyJWT, async(req, res)=>{
       const {price} = req.body;
-      const amount = price * 100;
+      const amount = parseInt (price * 100);
       console.log(price, amount);
       const paymentIntent = await stripe.paymentIntents.create({
         amount: amount, 
@@ -78,23 +94,7 @@ async function run() {
       const deleteResult = await bistroCartsDatabase.deleteMany(query)
       res.send(insertResult, deleteResult)
     })
-
-    app.post('/jwt', (req, res) => {
-      const user = req.body;
-      const token = jwt.sign(user, process.env.ACCES_TOKEN, { expiresIn: '1h' });
-      res.send({ token })
-    })
-
-    const verifyAdmin = async (req, res, next) => {
-      const email = req.decoded.email;
-      const query = { email: email };
-      const user = await bistroUsersDatabase.findOne(query)
-      if (user?.roll !== 'admin') {
-        return res.status(403).send({ error: true, message: 'forbidden message' });
-      }
-      next();
-    }
-
+    
     app.get('/users', verifyJWT, verifyAdmin, async (req, res) => {
       const result = await bistroUsersDatabase.find().toArray()
       res.send(result)
@@ -128,7 +128,6 @@ async function run() {
       const result = { admin: user?.roll === 'admin' }
       res.send(result);
     })
-
 
     //users patch admin
     app.patch('/users/admin/:id', async (req, res) => {
@@ -199,6 +198,59 @@ async function run() {
       const result = await bistroMenuDatabase.find().toArray()
       res.send(result)
     })
+
+    app.get('/admin-stats',verifyJWT, verifyAdmin, async(req, res)=>{
+      const user = await bistroUsersDatabase.estimatedDocumentCount();
+      const products = await bistroMenuDatabase.estimatedDocumentCount();
+      const order = await paymentInfoBistroDatabase.estimatedDocumentCount();
+
+      const payments = await paymentInfoBistroDatabase.find().toArray();
+      const revenue = payments.reduce((sum, payment) => sum + payment.price, 0)
+
+      res.send({
+        revenue,
+        user,
+        products,
+        order
+      })
+    })
+
+    app.get('/order-status', async(req, res)=>{
+     
+      const pipeline = [
+        {
+          $lookup: {
+            from: 'menu',
+            localField: 'menuItems',
+            foreignField: '_id',
+            as: 'menuItemsData'
+          }
+        },
+        {
+          $unwind: '$menuItemsData',
+        },
+        {
+          $group: {
+            _id: '$menuItemsData.category',
+            count: { $sum: 1 },
+            total: { $sum: '$menuItemsData.price' }
+          }
+        },
+        {
+          $project: {
+            category: '$_id',
+            count: '1',
+            total: { $round: ['$total', 2] },
+            _id: 0
+          }
+        }
+      ];
+      const result = await paymentInfoBistroDatabase.aggregate(pipeline).toArray()
+      res.send(result)
+    })
+
+
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
